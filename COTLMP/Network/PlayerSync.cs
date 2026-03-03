@@ -96,6 +96,7 @@ namespace COTLMP.Network
             = new System.Collections.Generic.List<ChatEntry>();
         private bool   _chatOpen;
         private string _chatInput = "";
+        private int    _chatOpenFrame;   // frame chat was opened — eat input for 1 frame
         private const int   MaxChatMessages     = 8;
         private const float ChatMessageLifetime  = 10f;
 
@@ -696,15 +697,22 @@ namespace COTLMP.Network
             // Toggle chat open with T key (only when chat is closed)
             if (!_chatOpen && e.type == EventType.KeyDown && e.keyCode == KeyCode.T)
             {
-                _chatOpen  = true;
-                _chatInput = "";
+                _chatOpen      = true;
+                _chatInput     = "";
+                _chatOpenFrame = Time.frameCount;
                 e.Use();
                 return;
             }
 
             // ---- display recent messages ----
 
-            float y   = Screen.height - 80;
+            /* Chat is centered horizontally, positioned in the lower
+               third of the screen below the notification area. */
+            float chatWidth  = 420f;
+            float chatX      = (Screen.width - chatWidth) * 0.5f;
+            float chatBottom = Screen.height * 0.65f;
+
+            float y   = chatBottom;
             float now = Time.time;
 
             var labelStyle = new GUIStyle(GUI.skin.label)
@@ -722,14 +730,20 @@ namespace COTLMP.Network
                 if (!_chatOpen && now - msg.Timestamp > ChatMessageLifetime)
                     continue;
 
-                GUI.Label(new Rect(12, y + 1, 500, 24), msg.Text, shadowStyle);
-                GUI.Label(new Rect(10, y, 500, 24), msg.Text, labelStyle);
+                GUI.Label(new Rect(chatX + 2, y + 1, chatWidth, 24), msg.Text, shadowStyle);
+                GUI.Label(new Rect(chatX, y, chatWidth, 24), msg.Text, labelStyle);
                 y -= 22;
             }
 
             if (!_chatOpen) return;
 
             // ---- input field ----
+
+            /* On the frame chat was opened, the T key event is still
+               in the IMGUI queue.  Skip rendering the TextField for
+               this one frame so it cannot consume the stale T press. */
+            if (Time.frameCount == _chatOpenFrame)
+                return;
 
             /* Capture the key state BEFORE GUI.TextField processes
                the event.  TextField consumes KeyDown for Return and
@@ -740,7 +754,7 @@ namespace COTLMP.Network
             bool escapePressed = e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape;
 
             GUI.SetNextControlName("ChatInput");
-            _chatInput = GUI.TextField(new Rect(10, Screen.height - 45, 400, 30), _chatInput, 200);
+            _chatInput = GUI.TextField(new Rect(chatX, chatBottom + 8, chatWidth, 30), _chatInput, 200);
             GUI.FocusControl("ChatInput");
 
             if (enterPressed)
