@@ -20,7 +20,7 @@ namespace COTLMP.Language
         public static LocalizationTable[] StringsTable =
         [
             new("UI/DLC", "Multiplayer", true),
-            new("UI/Banner", $"Multiplayer Edition v{COTLMP.Data.Version.CotlMpVer}", false),
+            new("UI/Banner", $"LAN Edition {COTLMP.Data.Version.CotlMpVer}", false),
             new("Multiplayer/UI/TitleDialog", "Multiplayer", false),
             new("Multiplayer/UI/Settings", "Multiplayer Settings", false),
             new("Multiplayer/UI/Settings/DisableMod", "Mod Toggle", false),

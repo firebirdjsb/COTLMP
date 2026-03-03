@@ -66,16 +66,50 @@ namespace COTLMP.Network
         // to the coop avatar during multiplayer.  Multiple game systems
         // (donation box, interaction podiums, cutscenes) call this and
         // it causes the host camera to follow the network avatar.
-        [HarmonyPatch(typeof(PlayerFarming), nameof(PlayerFarming.SetMainPlayer))]
+        //
+        // SetMainPlayer has three overloads — we patch the StateMachine
+        // and PlayerFarming variants (the Collider2D one resolves to
+        // one of the other two internally).
+        [HarmonyPatch(typeof(PlayerFarming), nameof(PlayerFarming.SetMainPlayer),
+            new Type[] { typeof(StateMachine) })]
         [HarmonyPrefix]
-        private static bool BlockSetMainPlayerToCoop(StateMachine state)
+        private static bool BlockSetMainPlayerToCoopSM(StateMachine state)
         {
             if (!InternalData.IsMultiplayerSession) return true;
             if (state == null) return true;
 
             var pf = state.GetComponent<PlayerFarming>();
             if (pf != null && !pf.isLamb)
-                return false; // block: never make the coop avatar the main player
+                return false;
+
+            return true;
+        }
+
+        [HarmonyPatch(typeof(PlayerFarming), nameof(PlayerFarming.SetMainPlayer),
+            new Type[] { typeof(PlayerFarming) })]
+        [HarmonyPrefix]
+        private static bool BlockSetMainPlayerToCoopPF(PlayerFarming playerFarming)
+        {
+            if (!InternalData.IsMultiplayerSession) return true;
+            if (playerFarming == null) return true;
+
+            if (!playerFarming.isLamb)
+                return false;
+
+            return true;
+        }
+
+        [HarmonyPatch(typeof(PlayerFarming), nameof(PlayerFarming.SetMainPlayer),
+            new Type[] { typeof(UnityEngine.Collider2D) })]
+        [HarmonyPrefix]
+        private static bool BlockSetMainPlayerToCoopCol(UnityEngine.Collider2D collider2D)
+        {
+            if (!InternalData.IsMultiplayerSession) return true;
+            if (collider2D == null) return true;
+
+            var pf = collider2D.GetComponentInParent<PlayerFarming>();
+            if (pf != null && !pf.isLamb)
+                return false;
 
             return true;
         }
