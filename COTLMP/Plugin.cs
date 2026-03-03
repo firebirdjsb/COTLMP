@@ -68,6 +68,11 @@ public class Plugin : BaseUnityPlugin
          */
         HarmonyInstance = Harmony.CreateAndPatchAll(Assembly.GetExecutingAssembly());
 
+        /* Apply runtime-resolved Harmony patches for types that cannot
+           be referenced at compile time (e.g. nested types). */
+        try { COTLMP.Network.DungeonSyncPatches.ApplyManualPatches(HarmonyInstance); }
+        catch (System.Exception ex) { Logger?.LogWarning($"DungeonSync manual patches failed: {ex.Message}"); }
+
         /* Cache the path location of the COTLMP mod */
         CotlmpPathLocation = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 

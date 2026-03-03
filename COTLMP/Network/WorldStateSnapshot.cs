@@ -27,7 +27,7 @@ namespace COTLMP.Network
      */
     internal sealed class WorldStateSnapshot
     {
-        public const int FormatVersion = 2;
+        public const int FormatVersion = 7;
 
         /* ------------------------------------------------------------------ */
         /* Header                                                               */
@@ -36,6 +36,56 @@ namespace COTLMP.Network
         public string SceneName = "";
         public float  TimeOfDay;
         public int    CurrentDay;
+
+        /** RNG seed used by the host for dungeon generation so clients
+         *  produce identical room layouts. */
+        public int    DungeonSeed;
+
+        /* ------------------------------------------------------------------ */
+        /* Dungeon room tracking (host-authoritative)                            */
+        /* ------------------------------------------------------------------ */
+
+        /** BiomeGenerator.Instance.CurrentX / CurrentY on the host.
+         *  The client follows the host through rooms using these. */
+        public int DungeonRoomX;
+        public int DungeonRoomY = -1;
+
+        /** GameManager.CurrentDungeonFloor on the host. */
+        public int DungeonFloor;
+
+        /** GameManager.CurrentDungeonLayer on the host. */
+        public int DungeonLayer;
+
+        /* ------------------------------------------------------------------ */
+        /* Weather (host-authoritative)                                          */
+        /* ------------------------------------------------------------------ */
+
+        public int   WeatherType;         // WeatherSystemController.WeatherType
+        public int   WeatherStrength;     // WeatherSystemController.WeatherStrength
+        public int   WeatherDuration;
+        public float WeatherStartTime;
+
+        /* ------------------------------------------------------------------ */
+        /* Cult stats (host-authoritative)                                       */
+        /* ------------------------------------------------------------------ */
+
+        public float CultFaith;
+        public float StaticFaith;
+        public float HungerBar;
+        public float IllnessBar;
+        public float IllnessBarMax;
+
+        /* ------------------------------------------------------------------ */
+        /* Player equipment (host-authoritative)                                */
+        /* ------------------------------------------------------------------ */
+
+        /** Weapon type the host is currently wielding (cast of EquipmentType). */
+        public int EquippedWeaponType = -1;
+
+        /** Curse type the host is currently using (cast of EquipmentType). */
+        public int EquippedCurseType  = -1;
+
+        public RelicEntry[] Relics = Array.Empty<RelicEntry>();
 
         /* ------------------------------------------------------------------ */
         /* Sections                                                             */
@@ -46,6 +96,8 @@ namespace COTLMP.Network
         public EnemyEntry[]       Enemies      = Array.Empty<EnemyEntry>();
         public DroppedItemEntry[] DroppedItems = Array.Empty<DroppedItemEntry>();
         public ResourceEntry[]    Resources    = Array.Empty<ResourceEntry>();
+        public NpcEntry[]         Npcs         = Array.Empty<NpcEntry>();
+        public CritterEntry[]     Critters     = Array.Empty<CritterEntry>();
 
         /* ------------------------------------------------------------------ */
         /* Inner data types                                                     */
@@ -60,6 +112,7 @@ namespace COTLMP.Network
             public string Name;
             public string Animation;
             public float  FacingAngle;
+            public float  SpineScaleX;
         }
 
         public struct StructureEntry
@@ -90,9 +143,37 @@ namespace COTLMP.Network
 
         public struct ResourceEntry
         {
-            public int   InstanceID;
-            public float X, Y;
-            public bool  IsDestroyed;
+            public int    InstanceID;
+            public string TypeName;
+            public float  X, Y;
+            public float  HP, TotalHP;
+            public bool   IsDestroyed;
+        }
+
+        /** Insects, animals, and ambient NPCs that roam the scene. */
+        public struct NpcEntry
+        {
+            public int    InstanceID;
+            public string TypeName;
+            public float  X, Y;
+            public float  HP, TotalHP;
+            public bool   IsDead;
+        }
+
+        /** Critters: spiders, birds, bees, butterflies, etc. */
+        public struct CritterEntry
+        {
+            public int    InstanceID;
+            public string TypeName;
+            public float  X, Y;
+            public bool   IsDead;
+        }
+
+        /** Relics / trinkets held during a dungeon run. */
+        public struct RelicEntry
+        {
+            public int  Type;       // TarotCards.Card cast to int
+            public int  Level;
         }
 
         /* ------------------------------------------------------------------ */
@@ -115,6 +196,34 @@ namespace COTLMP.Network
                 WriteStr(w, SceneName);
                 w.Write(TimeOfDay);
                 w.Write(CurrentDay);
+                w.Write(DungeonSeed);
+                w.Write(DungeonRoomX);
+                w.Write(DungeonRoomY);
+                w.Write(DungeonFloor);
+                w.Write(DungeonLayer);
+
+                /* Weather */
+                w.Write(WeatherType);
+                w.Write(WeatherStrength);
+                w.Write(WeatherDuration);
+                w.Write(WeatherStartTime);
+
+                /* Cult stats */
+                w.Write(CultFaith);
+                w.Write(StaticFaith);
+                w.Write(HungerBar);
+                w.Write(IllnessBar);
+                w.Write(IllnessBarMax);
+
+                /* Equipment */
+                w.Write(EquippedWeaponType);
+                w.Write(EquippedCurseType);
+                w.Write(Relics.Length);
+                foreach (var rel in Relics)
+                {
+                    w.Write(rel.Type);
+                    w.Write(rel.Level);
+                }
 
                 /* Followers */
                 w.Write(Followers.Length);
@@ -127,6 +236,7 @@ namespace COTLMP.Network
                     WriteStr(w, f.Name);
                     WriteStr(w, f.Animation);
                     w.Write(f.FacingAngle);
+                    w.Write(f.SpineScaleX);
                 }
 
                 /* Structures */
@@ -163,8 +273,31 @@ namespace COTLMP.Network
                 foreach (var r in Resources)
                 {
                     w.Write(r.InstanceID);
+                    WriteStr(w, r.TypeName);
                     w.Write(r.X); w.Write(r.Y);
+                    w.Write(r.HP); w.Write(r.TotalHP);
                     w.Write(r.IsDestroyed);
+                }
+
+                /* NPCs (insects, animals, ambient creatures) */
+                w.Write(Npcs.Length);
+                foreach (var n in Npcs)
+                {
+                    w.Write(n.InstanceID);
+                    WriteStr(w, n.TypeName);
+                    w.Write(n.X); w.Write(n.Y);
+                    w.Write(n.HP); w.Write(n.TotalHP);
+                    w.Write(n.IsDead);
+                }
+
+                /* Critters (spiders, birds, bees, etc.) */
+                w.Write(Critters.Length);
+                foreach (var c in Critters)
+                {
+                    w.Write(c.InstanceID);
+                    WriteStr(w, c.TypeName);
+                    w.Write(c.X); w.Write(c.Y);
+                    w.Write(c.IsDead);
                 }
 
                 return ms.ToArray();
@@ -194,6 +327,38 @@ namespace COTLMP.Network
                 snap.SceneName  = ReadStr(r);
                 snap.TimeOfDay  = r.ReadSingle();
                 snap.CurrentDay = r.ReadInt32();
+                snap.DungeonSeed = r.ReadInt32();
+                snap.DungeonRoomX = r.ReadInt32();
+                snap.DungeonRoomY = r.ReadInt32();
+                snap.DungeonFloor = r.ReadInt32();
+                snap.DungeonLayer = r.ReadInt32();
+
+                /* Weather */
+                snap.WeatherType     = r.ReadInt32();
+                snap.WeatherStrength = r.ReadInt32();
+                snap.WeatherDuration = r.ReadInt32();
+                snap.WeatherStartTime = r.ReadSingle();
+
+                /* Cult stats */
+                snap.CultFaith    = r.ReadSingle();
+                snap.StaticFaith  = r.ReadSingle();
+                snap.HungerBar    = r.ReadSingle();
+                snap.IllnessBar   = r.ReadSingle();
+                snap.IllnessBarMax = r.ReadSingle();
+
+                /* Equipment */
+                snap.EquippedWeaponType = r.ReadInt32();
+                snap.EquippedCurseType  = r.ReadInt32();
+                int relicCount = r.ReadInt32();
+                snap.Relics = new RelicEntry[relicCount];
+                for (int i = 0; i < relicCount; i++)
+                {
+                    snap.Relics[i] = new RelicEntry
+                    {
+                        Type  = r.ReadInt32(),
+                        Level = r.ReadInt32()
+                    };
+                }
 
                 /* Followers */
                 int count = r.ReadInt32();
@@ -208,7 +373,8 @@ namespace COTLMP.Network
                         Role        = r.ReadInt32(),
                         Name        = ReadStr(r),
                         Animation   = ReadStr(r),
-                        FacingAngle = r.ReadSingle()
+                        FacingAngle = r.ReadSingle(),
+                        SpineScaleX = r.ReadSingle()
                     };
                 }
 
@@ -261,8 +427,39 @@ namespace COTLMP.Network
                     snap.Resources[i] = new ResourceEntry
                     {
                         InstanceID  = r.ReadInt32(),
+                        TypeName    = ReadStr(r),
                         X           = r.ReadSingle(), Y = r.ReadSingle(),
+                        HP          = r.ReadSingle(), TotalHP = r.ReadSingle(),
                         IsDestroyed = r.ReadBoolean()
+                    };
+                }
+
+                /* NPCs */
+                count = r.ReadInt32();
+                snap.Npcs = new NpcEntry[count];
+                for (int i = 0; i < count; i++)
+                {
+                    snap.Npcs[i] = new NpcEntry
+                    {
+                        InstanceID = r.ReadInt32(),
+                        TypeName   = ReadStr(r),
+                        X          = r.ReadSingle(), Y = r.ReadSingle(),
+                        HP         = r.ReadSingle(), TotalHP = r.ReadSingle(),
+                        IsDead     = r.ReadBoolean()
+                    };
+                }
+
+                /* Critters */
+                count = r.ReadInt32();
+                snap.Critters = new CritterEntry[count];
+                for (int i = 0; i < count; i++)
+                {
+                    snap.Critters[i] = new CritterEntry
+                    {
+                        InstanceID = r.ReadInt32(),
+                        TypeName   = ReadStr(r),
+                        X          = r.ReadSingle(), Y = r.ReadSingle(),
+                        IsDead     = r.ReadBoolean()
                     };
                 }
             }

@@ -8,6 +8,7 @@ using COTLMP.Data;
 using HarmonyLib;
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using UnityEngine;
@@ -40,6 +41,43 @@ namespace COTLMP.Network
             // in RemotePlayerInfo.Tick(), so the game's own logic is not needed
             // and only causes desyncs.
             return false;
+        }
+
+        // Blocks Interaction.OnInteract when the colliding StateMachine
+        // belongs to the coop avatar.  This prevents donation boxes,
+        // chests, and other interactions from storing the coop avatar
+        // as the active player, which causes SetMainPlayer to switch
+        // the camera/control to the network avatar and desync the host.
+        [HarmonyPatch(typeof(Interaction), nameof(Interaction.OnInteract))]
+        [HarmonyPrefix]
+        private static bool BlockCoopAvatarInteraction(StateMachine state)
+        {
+            if (!InternalData.IsMultiplayerSession) return true;
+            if (state == null) return true;
+
+            var pf = state.GetComponent<PlayerFarming>();
+            if (pf != null && !pf.isLamb)
+                return false; // block: coop avatar must not interact
+
+            return true;
+        }
+
+        // Prevents SetMainPlayer from ever switching the active player
+        // to the coop avatar during multiplayer.  Multiple game systems
+        // (donation box, interaction podiums, cutscenes) call this and
+        // it causes the host camera to follow the network avatar.
+        [HarmonyPatch(typeof(PlayerFarming), nameof(PlayerFarming.SetMainPlayer))]
+        [HarmonyPrefix]
+        private static bool BlockSetMainPlayerToCoop(StateMachine state)
+        {
+            if (!InternalData.IsMultiplayerSession) return true;
+            if (state == null) return true;
+
+            var pf = state.GetComponent<PlayerFarming>();
+            if (pf != null && !pf.isLamb)
+                return false; // block: never make the coop avatar the main player
+
+            return true;
         }
 
         // Blocks CoopManager.RemoveCoopPlayer so the remote player's
@@ -421,6 +459,337 @@ namespace COTLMP.Network
                     gz.Write(raw, 0, raw.Length);
                 return output.ToArray();
             }
+        }
+    }
+
+    // Dungeon-specific patches for multiplayer.
+    //
+    // 1) Sync the dungeon generation seed so clients produce the same
+    //    room layout as the host.
+    // 2) Auto-open room barriers / doors on clients so players are
+    //    never stuck behind a weapon-check or puzzle-gate that only
+    //    fires on the host.
+    // 3) Allow all players to pick up items (weapons, curses, relics)
+    //    from pedestals, not just the host.
+    //
+    // Kept in a separate class so a single patch failure does not
+    // prevent CoopPatches / DoorPatches from loading.
+    //
+    // NOTE: GenerateRoom is MMRoomGeneration+GenerateRoom (a nested
+    // type).  We cannot use [HarmonyPatch(typeof(...))] at compile
+    // time because the parent type's dependencies fail to load via
+    // reflection in some environments.  Instead we apply manual
+    // patches at runtime in a static constructor.
+    internal static class DungeonSyncPatches
+    {
+        /* ---- runtime patch wiring --------------------------------------- */
+
+        internal static void ApplyManualPatches(HarmonyLib.Harmony harmony)
+        {
+            /* ---- Patch BiomeGenerator.Start for dungeon seed sync ---- */
+            try
+            {
+                /* BiomeGenerator.Start() is where the master dungeon seed
+                   is read: this.Seed = DataManager.RandomSeed.Next(...)
+                   We need our prefix to run BEFORE that line so we can
+                   overwrite DataManager.RandomSeed with the host's seed. */
+                var bgType = typeof(MMBiomeGeneration.BiomeGenerator);
+                var bgStart = bgType.GetMethod("Start",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic);
+                if (bgStart != null)
+                {
+                    var prefix = new HarmonyMethod(typeof(DungeonSyncPatches),
+                        nameof(SeedClientBiome));
+                    harmony.Patch(bgStart, prefix: prefix);
+                    Plugin.Logger?.LogInfo("[DungeonSync] Patched BiomeGenerator.Start");
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger?.LogWarning($"[DungeonSync] BiomeGenerator patch failed: {e.Message}");
+            }
+
+            /* ---- Patch GenerateRoom.Start for per-room seed sync ---- */
+            try
+            {
+                /* Resolve MMRoomGeneration+GenerateRoom at runtime */
+                var genRoomType = System.Type.GetType("MMRoomGeneration+GenerateRoom, Assembly-CSharp");
+                if (genRoomType == null)
+                {
+                    /* Fallback: scan all loaded assemblies */
+                    foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        genRoomType = asm.GetType("MMRoomGeneration+GenerateRoom");
+                        if (genRoomType != null) break;
+                    }
+                }
+
+                if (genRoomType != null)
+                {
+                    var startMethod = genRoomType.GetMethod("Start",
+                        System.Reflection.BindingFlags.Instance |
+                        System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic);
+
+                    if (startMethod != null)
+                    {
+                        var prefix = new HarmonyMethod(typeof(DungeonSyncPatches),
+                            nameof(SeedClientDungeon));
+                        var postfix = new HarmonyMethod(typeof(DungeonSyncPatches),
+                            nameof(AutoOpenClientRoomBarriers));
+                        harmony.Patch(startMethod, prefix: prefix, postfix: postfix);
+                        Plugin.Logger?.LogInfo("[DungeonSync] Patched GenerateRoom.Start");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger?.LogWarning($"[DungeonSync] Manual patch failed: {e.Message}");
+            }
+
+            /* Patch Inteaction_DoorRoomDoor for weapon-check bypass */
+            try
+            {
+                /* Try multiple candidate method names for the door-ready
+                   check: CanOpenDoors, TryToOpenDoors.  The exact name
+                   varies by game version. */
+                var doorType = typeof(Inteaction_DoorRoomDoor);
+                string[] candidates = { "CanOpenDoors", "TryToOpenDoors", "ReadyToOpenDoors" };
+                foreach (var name in candidates)
+                {
+                    var m = doorType.GetMethod(name,
+                        System.Reflection.BindingFlags.Instance |
+                        System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic);
+                    if (m != null && m.ReturnType == typeof(bool))
+                    {
+                        var postfix = new HarmonyMethod(typeof(DungeonSyncPatches),
+                            nameof(ForceClientDoorReady));
+                        harmony.Patch(m, postfix: postfix);
+                        Plugin.Logger?.LogInfo($"[DungeonSync] Patched {name} on DoorRoomDoor");
+                        break;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger?.LogWarning($"[DungeonSync] DoorRoomDoor patch failed: {e.Message}");
+            }
+
+            /* Patch Interaction_WeaponSelectionPodium.GetAllPlayersWearingWeapons()
+               This is the REAL weapon-check: it loops all PlayerFarming.players
+               and returns false if any has currentWeapon == None.  The coop avatar
+               has no weapon, so the dungeon start room doors never open.
+               On clients, force it to return true. */
+            try
+            {
+                var podiumType = typeof(Interaction_WeaponSelectionPodium);
+                var m = podiumType.GetMethod("GetAllPlayersWearingWeapons",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic);
+                if (m != null)
+                {
+                    var postfix = new HarmonyMethod(typeof(DungeonSyncPatches),
+                        nameof(ForceAllPlayersArmed));
+                    harmony.Patch(m, postfix: postfix);
+                    Plugin.Logger?.LogInfo("[DungeonSync] Patched GetAllPlayersWearingWeapons");
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger?.LogWarning($"[DungeonSync] WeaponPodium patch failed: {e.Message}");
+            }
+            /* Patch PickUp.OnTriggerEnter2D finalizer for safe item pickup */
+            try
+            {
+                var pickupTrigger = typeof(PickUp).GetMethod("OnTriggerEnter2D",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic);
+                if (pickupTrigger != null)
+                {
+                    var finalizer = new HarmonyMethod(typeof(DungeonSyncPatches),
+                        nameof(SafePickUp));
+                    harmony.Patch(pickupTrigger, finalizer: finalizer);
+                }
+            }
+            catch { }
+        }
+
+        /* ---- BiomeGenerator seed sync ----------------------------------- */
+
+        // Prefix on BiomeGenerator.Start — must run BEFORE the line:
+        //   this.Seed = DataManager.RandomSeed.Next(-2147483647, int.MaxValue);
+        // so we replace DataManager.RandomSeed with one seeded from the host.
+        private static void SeedClientBiome()
+        {
+            if (!InternalData.IsMultiplayerSession) return;
+            if (InternalData.IsHost) return;
+
+            try
+            {
+                var dm = DataManager.Instance;
+                if (dm == null) return;
+
+                if (dm.LastDungeonSeeds != null && dm.LastDungeonSeeds.Count > 0)
+                {
+                    int seed = dm.LastDungeonSeeds[dm.LastDungeonSeeds.Count - 1];
+                    if (seed != 0)
+                    {
+                        DataManager.RandomSeed = new System.Random(seed);
+                        DataManager.UseDataManagerSeed = true;
+                        UnityEngine.Random.InitState(seed);
+                        Plugin.Logger?.LogInfo($"[DungeonSync] Client BiomeGenerator seeded to {seed}");
+                    }
+                }
+            }
+            catch { }
+        }
+
+        /* ---- Dungeon seed sync ------------------------------------------- */
+
+        // Prefix on GenerateRoom.Start — seed the client's RNG
+        private static void SeedClientDungeon()
+        {
+            if (!InternalData.IsMultiplayerSession) return;
+            if (InternalData.IsHost) return;
+
+            try
+            {
+                var dm = DataManager.Instance;
+                if (dm == null) return;
+
+                /* DataManager.RandomSeed is the System.Random used by
+                   dungeon generation.  Reseed it and Unity's RNG so
+                   GenerateRoom.GenerateRandomSeed() produces the same
+                   Seed value as on the host. */
+                if (dm.LastDungeonSeeds != null && dm.LastDungeonSeeds.Count > 0)
+                {
+                    int seed = dm.LastDungeonSeeds[dm.LastDungeonSeeds.Count - 1];
+                    if (seed != 0)
+                    {
+                        DataManager.RandomSeed = new System.Random(seed);
+                        DataManager.UseDataManagerSeed = true;
+                        UnityEngine.Random.InitState(seed);
+                        Plugin.Logger?.LogInfo($"[DungeonSync] Client seeded RNG to {seed}");
+                    }
+                }
+            }
+            catch { }
+        }
+
+        /* ---- Room barrier / weapon-check bypass -------------------------- */
+
+        // Postfix on GenerateRoom.Start — schedule barrier auto-open
+        // The __instance parameter is typed as MonoBehaviour so the
+        // patch signature does not require the nested type at compile time.
+        private static void AutoOpenClientRoomBarriers(MonoBehaviour __instance)
+        {
+            if (!InternalData.IsMultiplayerSession) return;
+            if (InternalData.IsHost) return;
+
+            try
+            {
+                Plugin.MonoInstance?.StartCoroutine(ForceOpenBarriersWhenClear(__instance));
+            }
+            catch { }
+        }
+
+        private static IEnumerator ForceOpenBarriersWhenClear(MonoBehaviour room)
+        {
+            // Let the room finish initialising (enemies spawn, etc.)
+            yield return new WaitForSeconds(1.5f);
+
+            // Poll until the room is cleared or the object is destroyed
+            for (int attempt = 0; attempt < 120; attempt++)
+            {
+                if (room == null) yield break;
+
+                bool hasLivingEnemy = false;
+                try
+                {
+                    var enemies = room.GetComponentsInChildren<EnemyAI>(false);
+                    if (enemies != null)
+                    {
+                        foreach (var ai in enemies)
+                        {
+                            if (ai == null) continue;
+                            var hp = ai.GetComponent<Health>();
+                            if (hp != null && hp.HP > 0f)
+                            {
+                                hasLivingEnemy = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                if (!hasLivingEnemy)
+                {
+                    // Room is clear — call the game's own RoomCompleted
+                    // which fires OnRoomCompleted events and opens barriers
+                    try { RoomLockController.RoomCompleted(false, true); }
+                    catch { }
+
+                    // Fallback: also try RoomLockController.OpenAll()
+                    try { RoomLockController.OpenAll(); }
+                    catch { }
+
+                    yield break;
+                }
+
+                yield return new WaitForSeconds(0.5f);
+            }
+        }
+
+        /* ---- Weapon / curse check bypass --------------------------------- */
+
+        // Applied manually to Inteaction_DoorRoomDoor.CanOpenDoors (or
+        // TryToOpenDoors) — forces the result to true on clients.
+        private static void ForceClientDoorReady(ref bool __result)
+        {
+            if (!InternalData.IsMultiplayerSession) return;
+            if (InternalData.IsHost) return;
+            __result = true;
+        }
+
+        // Postfix on Interaction_WeaponSelectionPodium.GetAllPlayersWearingWeapons.
+        // The original checks EVERY PlayerFarming in the players list.
+        // The network coop avatar has currentWeapon == None, so it returns false
+        // and the dungeon start room doors stay locked.
+        // During multiplayer (both host and client), force it to only consider
+        // the local lamb (isLamb == true) — or just return true if the lamb
+        // has a weapon, ignoring the coop avatar.
+        private static void ForceAllPlayersArmed(ref bool __result)
+        {
+            if (!InternalData.IsMultiplayerSession) return;
+
+            try
+            {
+                // Check only the local lamb
+                if (PlayerFarming.Instance != null
+                    && PlayerFarming.Instance.currentWeapon != EquipmentType.None)
+                {
+                    __result = true;
+                }
+            }
+            catch { }
+        }
+
+        /* ---- Allow item pick-up for all players -------------------------- */
+
+        // Finalizer: if PickUp.OnTriggerEnter2D throws for the coop
+        // avatar (e.g. because Rewired player is null), silently
+        // swallow the error so the item still gets collected.
+        private static Exception SafePickUp(Exception __exception)
+        {
+            if (InternalData.IsMultiplayerSession && __exception != null)
+                return null;
+            return __exception;
         }
     }
 }

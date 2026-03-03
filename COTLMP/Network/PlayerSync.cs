@@ -72,7 +72,7 @@ namespace COTLMP.Network
 
         // World-state heartbeat timer (host only)
         private float _worldStateTimer;
-        private const float WorldStateInterval = 0.1f;
+        private const float WorldStateInterval = 0.5f;
 
         // Last-sent values to avoid redundant state/health packets
         private StateMachine.State _lastState  = StateMachine.State.Idle;
@@ -212,6 +212,9 @@ namespace COTLMP.Network
             // Tick all remote player avatars for interpolation
             foreach (var rp in _remotePlayers.Values)
                 rp.Tick();
+
+            // Tick follower interpolation every frame for smooth movement
+            try { WorldStateSyncer.TickFollowerInterpolation(); } catch { }
         }
 
         // Runs after all Update() calls. Re-applies the network-driven position
@@ -248,9 +251,17 @@ namespace COTLMP.Network
             _sceneTransitionGrace = SceneTransitionGraceTime;
             _sceneChangeInProgress = false;
 
+            // Clear stale follower caches and room-change debounce
+            WorldStateSyncer.ResetTransientState();
+
             // Host: tell all clients to follow to this scene
+            // and immediately send a world-state heartbeat so dungeon seed,
+            // room coords, floor/layer are available before BiomeGenerator.Start
             if (Data.InternalData.IsHost)
+            {
                 ActiveClient?.SendSceneChange(scene.name);
+                SendWorldStateHeartbeat();
+            }
 
             StartCoroutine(RespawnRemotePlayersDelayed());
         }
