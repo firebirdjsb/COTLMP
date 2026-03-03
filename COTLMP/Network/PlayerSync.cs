@@ -68,11 +68,11 @@ namespace COTLMP.Network
 
         // Heartbeat timer
         private float _heartbeatTimer;
-        private const float HeartbeatInterval = 5f;
+        private const float HeartbeatInterval = 2f;
 
         // World-state heartbeat timer (host only)
         private float _worldStateTimer;
-        private const float WorldStateInterval = 2f;
+        private const float WorldStateInterval = 0.1f;
 
         // Last-sent values to avoid redundant state/health packets
         private StateMachine.State _lastState  = StateMachine.State.Idle;
@@ -83,6 +83,13 @@ namespace COTLMP.Network
         // after a scene load to prevent loading-zone rubber-banding.
         private static float _sceneTransitionGrace;
         private const float SceneTransitionGraceTime = 2f;
+
+        // Scene-change debounce – when the host sends rapid successive
+        // scene changes (e.g. Base → BufferScene → Dungeon1), the client
+        // stores only the latest target and applies it once per frame so
+        // overlapping MMTransition calls never stack and softlock.
+        private static string _pendingSceneChange;
+        private static bool   _sceneChangeInProgress;
 
         // Chat state
         private static readonly System.Collections.Generic.List<ChatEntry> _chatMessages
@@ -166,6 +173,11 @@ namespace COTLMP.Network
 
             if (!IsConnected) return;
 
+            // Process any debounced scene change before anything else
+            // so the transition starts immediately the frame after the
+            // network event was enqueued.
+            ProcessPendingSceneChange();
+
             // Tick down scene-transition grace period
             if (_sceneTransitionGrace > 0f)
                 _sceneTransitionGrace -= Time.deltaTime;
@@ -202,6 +214,17 @@ namespace COTLMP.Network
                 rp.Tick();
         }
 
+        // Runs after all Update() calls. Re-applies the network-driven position
+        // to remote avatars so our position always wins, even if the game's own
+        // PlayerFarming logic somehow ran and overrode it.
+        private void LateUpdate()
+        {
+            if (!IsConnected) return;
+
+            foreach (var rp in _remotePlayers.Values)
+                rp.ForcePosition();
+        }
+
         private void OnDestroy()
         {
             SceneManager.sceneLoaded -= OnGameSceneLoaded;
@@ -219,9 +242,11 @@ namespace COTLMP.Network
         private void OnGameSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             if (scene.name.Equals("Main Menu")) return;
+            if (IsTransientScene(scene.name)) return;
             if (!IsConnected) return;
 
             _sceneTransitionGrace = SceneTransitionGraceTime;
+            _sceneChangeInProgress = false;
 
             // Host: tell all clients to follow to this scene
             if (Data.InternalData.IsHost)
@@ -237,9 +262,46 @@ namespace COTLMP.Network
             yield return null;
             yield return null;
 
+            // On clients, force-resume any pending transition so dungeon
+            // scenes (and others that use ChangeRoomWaitToResume internally)
+            // never softlock on a black screen.
+            if (!Data.InternalData.IsHost)
+            {
+                ForceResumeTransition();
+
+                // Retry several times over the next few seconds.  Some
+                // scenes (dungeons especially) initialise asynchronously
+                // and MMTransition may re-pause after our first resume.
+                for (int i = 0; i < 5; i++)
+                {
+                    yield return new WaitForSecondsRealtime(0.5f);
+                    ForceResumeTransition();
+                }
+            }
+
             foreach (var rp in _remotePlayers.Values)
                 rp.ResetAvatar();
             // Tick()'s retry timer will call TrySpawn() on each RemotePlayerInfo
+        }
+
+        /**
+         * @brief
+         * Forces the MMTransition system to clear any black-fade overlay
+         * and un-pauses the game.  Safe to call multiple times.
+         */
+        private static void ForceResumeTransition()
+        {
+            try
+            {
+                MMTools.MMTransition.CanResume = true;
+                MMTools.MMTransition.ResumePlay();
+            }
+            catch { }
+
+            // Ensure the HUD is visible and the simulation is not paused
+            try { if (HUD_Manager.Instance != null) HUD_Manager.Instance.Hidden = false; } catch { }
+            try { SimulationManager.UnPause(); } catch { }
+            try { GameManager.SetTimeScale(1f); } catch { }
         }
 
         /* ------------------------------------------------------------------ */
@@ -355,7 +417,17 @@ namespace COTLMP.Network
 
         private static void OnRemoteJoined(int id, string name)
         {
-            if (_remotePlayers.ContainsKey(id)) return;
+            // Handle reconnection: if a player with this ID already
+            // exists (server reused the ID), reset their avatar so it
+            // re-spawns cleanly in the current scene.
+            if (_remotePlayers.TryGetValue(id, out RemotePlayerInfo existing))
+            {
+                existing.ResetAvatar();
+                existing.TrySpawn();
+                Plugin.Logger?.LogInfo($"[PlayerSync] Remote player reconnected: '{name}' (ID {id})");
+                return;
+            }
+
             var rp = new RemotePlayerInfo(id, name);
             _remotePlayers[id] = rp;
             rp.TrySpawn();
@@ -491,37 +563,69 @@ namespace COTLMP.Network
         /**
          * @brief
          * Called on a client when the host transitions to a different scene.
-         * Triggers a scene transition so the client follows the host.
+         * Stores the target scene name for debounced processing in Update().
+         *
+         * When the host enters a dungeon the game goes through Base →
+         * BufferScene → Dungeon1 in quick succession.  If we start an
+         * MMTransition for each one, overlapping fades corrupt the
+         * transition state machine and leave a permanent black screen.
+         * Instead we store only the latest target and kick off exactly
+         * one transition per frame from Update().
          */
         private static void OnSceneChange(string sceneName)
         {
             if (string.IsNullOrEmpty(sceneName)) return;
             if (Data.InternalData.IsHost) return; // host drives scene changes
+            if (IsTransientScene(sceneName)) return; // skip intermediate loading buffers
 
             string current = SceneManager.GetActiveScene().name;
             if (string.Equals(current, sceneName, StringComparison.Ordinal)) return;
 
-            Plugin.Logger?.LogInfo($"[PlayerSync] Host changed scene to '{sceneName}', following...");
+            Plugin.Logger?.LogInfo($"[PlayerSync] Host changed scene to '{sceneName}', queued.");
+            _pendingSceneChange = sceneName;
+        }
 
-            _sceneTransitionGrace = SceneTransitionGraceTime;
+        /**
+         * @brief
+         * Processes the most-recently queued scene change.  Called from
+         * Update() so at most one transition runs at a time.
+         */
+        private static void ProcessPendingSceneChange()
+        {
+            if (_pendingSceneChange == null) return;
+
+            string target = _pendingSceneChange;
+            _pendingSceneChange = null;
+
+            string current = SceneManager.GetActiveScene().name;
+            if (string.Equals(current, target, StringComparison.Ordinal)) return;
+
+            // If a transition is already running, force-stop it first
+            // and clear any residual black overlay before starting the new one.
+            if (_sceneChangeInProgress)
+            {
+                try { MMTools.MMTransition.StopCurrentTransition(); } catch { }
+                ForceResumeTransition();
+            }
+
+            _sceneChangeInProgress = true;
+            _sceneTransitionGrace  = SceneTransitionGraceTime;
+
+            Plugin.Logger?.LogInfo($"[PlayerSync] Following host to '{target}'...");
 
             try
             {
-                /* Use ChangeSceneAutoResume instead of ChangeRoomWaitToResume.
-                   ChangeRoomWaitToResume waits for the game's internal "resume"
-                   signal which never fires on the client for dungeon scenes
-                   (the dungeon room management system is not initialised),
-                   causing a permanent softlock. */
                 MMTools.MMTransition.Play(
                     MMTools.MMTransition.TransitionType.ChangeSceneAutoResume,
                     MMTools.MMTransition.Effect.BlackFade,
-                    sceneName, 1f, "", null, null);
+                    target, 1f, "", null, null);
             }
             catch (Exception e)
             {
                 /* Fallback: direct scene load so the client never softlocks */
                 Plugin.Logger?.LogWarning($"[PlayerSync] MMTransition failed, falling back to direct load: {e.Message}");
-                try { SceneManager.LoadScene(sceneName); } catch { }
+                _sceneChangeInProgress = false;
+                try { SceneManager.LoadScene(target); } catch { }
             }
         }
 
@@ -555,6 +659,15 @@ namespace COTLMP.Network
         /* ------------------------------------------------------------------ */
         /* Helpers                                                              */
         /* ------------------------------------------------------------------ */
+
+        /** Returns true for transient intermediate scenes that should
+         *  never be relayed to clients or followed.  The game loads these
+         *  as brief loading buffers between real scenes. */
+        private static bool IsTransientScene(string name)
+        {
+            return string.Equals(name, "BufferScene", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "Splash",      StringComparison.OrdinalIgnoreCase);
+        }
 
         private static void Enqueue(Action action) => _mainThreadQueue.Enqueue(action);
 

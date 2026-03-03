@@ -315,6 +315,15 @@ namespace COTLMP.Network
         /** Store the latest animation name received from the network */
         public void SetAnimationName(string animName) { _targetAnimName = animName; }
 
+        // Called from PlayerSync.LateUpdate() to guarantee the network position
+        // sticks even if some game logic moved the avatar during Update().
+        public void ForcePosition()
+        {
+            if (_avatar == null) return;
+            _avatar.transform.position = Vector3.Lerp(
+                _avatar.transform.position, _targetPosition, LerpSpeed * Time.deltaTime);
+        }
+
         /* ------------------------------------------------------------------ */
         /* Per-frame update                                                     */
         /* ------------------------------------------------------------------ */
@@ -519,18 +528,31 @@ namespace COTLMP.Network
         {
             try
             {
-                // Find an existing TMP component BEFORE creating our own Canvas
-                // so FindObjectOfType does not return our empty one.
-                TMPro.TMP_Text tmPrefab = null;
-                var sceneCanvas = Object.FindObjectOfType<Canvas>();
-                if (sceneCanvas != null)
-                    tmPrefab = sceneCanvas.GetComponentInChildren<TMPro.TMP_Text>(true);
+                // Find a TMP font asset from the scene so the label matches the
+                // game's visual style.  We search for any existing TMP_Text and
+                // borrow its font; this avoids the material / shader mismatch
+                // that occurs when cloning a TextMeshProUGUI designed for a
+                // Screen Space canvas into a World Space context.
+                TMPro.TMP_FontAsset font = null;
+                try
+                {
+                    var existing = Object.FindObjectOfType<TMPro.TMP_Text>(true);
+                    if (existing != null)
+                        font = existing.font;
+                }
+                catch { }
+
+                // Fallback to TMP default font
+                if (font == null)
+                {
+                    try { font = TMPro.TMP_Settings.defaultFontAsset; } catch { }
+                }
 
                 var go = new GameObject($"RemotePlayer_Label_{text}");
                 go.transform.position = worldPos;
 
-                // A world-space Canvas is required for cloned TextMeshProUGUI
-                // components to render – without one the label was invisible.
+                // Use a world-space Canvas so the label renders in-scene
+                // and scales / sorts correctly with the game camera.
                 var canvas = go.AddComponent<Canvas>();
                 canvas.renderMode  = RenderMode.WorldSpace;
                 canvas.sortingOrder = 100;
@@ -539,29 +561,29 @@ namespace COTLMP.Network
                 rt.sizeDelta = new Vector2(4f, 1f);
                 go.transform.localScale = Vector3.one * 0.01f;
 
-                if (tmPrefab != null)
-                {
-                    var label = Object.Instantiate(tmPrefab.gameObject, go.transform);
-                    label.transform.localPosition = Vector3.zero;
+                // Create a child with a fresh TextMeshProUGUI component
+                // instead of cloning, which avoids inheriting incompatible
+                // material properties and layout constraints.
+                var labelGo = new GameObject("Label");
+                labelGo.transform.SetParent(go.transform, false);
 
-                    // Stretch the cloned label to fill the parent Canvas
-                    var labelRt = label.GetComponent<RectTransform>();
-                    if (labelRt != null)
-                    {
-                        labelRt.anchorMin = Vector2.zero;
-                        labelRt.anchorMax = Vector2.one;
-                        labelRt.offsetMin = Vector2.zero;
-                        labelRt.offsetMax = Vector2.zero;
-                    }
+                var labelRt = labelGo.AddComponent<RectTransform>();
+                labelRt.anchorMin = Vector2.zero;
+                labelRt.anchorMax = Vector2.one;
+                labelRt.offsetMin = Vector2.zero;
+                labelRt.offsetMax = Vector2.zero;
 
-                    var tm = label.GetComponent<TMPro.TMP_Text>();
-                    if (tm != null)
-                    {
-                        tm.text      = text;
-                        tm.fontSize  = 36f;
-                        tm.alignment = TMPro.TextAlignmentOptions.Center;
-                    }
-                }
+                var tm = labelGo.AddComponent<TMPro.TextMeshProUGUI>();
+                if (font != null) tm.font = font;
+                tm.text           = text;
+                tm.fontSize       = 36f;
+                tm.alignment      = TMPro.TextAlignmentOptions.Center;
+                tm.overflowMode   = TMPro.TextOverflowModes.Overflow;
+                tm.enableWordWrapping = false;
+                tm.color          = Color.white;
+                tm.outlineWidth   = 0.2f;
+                tm.outlineColor   = Color.black;
+
                 return go;
             }
             catch

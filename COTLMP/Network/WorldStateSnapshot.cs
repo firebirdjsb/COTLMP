@@ -27,7 +27,7 @@ namespace COTLMP.Network
      */
     internal sealed class WorldStateSnapshot
     {
-        public const int FormatVersion = 1;
+        public const int FormatVersion = 2;
 
         /* ------------------------------------------------------------------ */
         /* Header                                                               */
@@ -58,6 +58,8 @@ namespace COTLMP.Network
             public int    TaskType;
             public int    Role;
             public string Name;
+            public string Animation;
+            public float  FacingAngle;
         }
 
         public struct StructureEntry
@@ -123,6 +125,8 @@ namespace COTLMP.Network
                     w.Write(f.TaskType);
                     w.Write(f.Role);
                     WriteStr(w, f.Name);
+                    WriteStr(w, f.Animation);
+                    w.Write(f.FacingAngle);
                 }
 
                 /* Structures */
@@ -198,11 +202,13 @@ namespace COTLMP.Network
                 {
                     snap.Followers[i] = new FollowerEntry
                     {
-                        ID       = r.ReadInt32(),
-                        X        = r.ReadSingle(), Y = r.ReadSingle(),
-                        TaskType = r.ReadInt32(),
-                        Role     = r.ReadInt32(),
-                        Name     = ReadStr(r)
+                        ID          = r.ReadInt32(),
+                        X           = r.ReadSingle(), Y = r.ReadSingle(),
+                        TaskType    = r.ReadInt32(),
+                        Role        = r.ReadInt32(),
+                        Name        = ReadStr(r),
+                        Animation   = ReadStr(r),
+                        FacingAngle = r.ReadSingle()
                     };
                 }
 

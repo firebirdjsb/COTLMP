@@ -80,7 +80,7 @@ namespace COTLMP.Ui
             // ---- dim background ----
             var dim   = MakeRect("Dim", root.transform);
             var dimImg = dim.AddComponent<Image>();
-            dimImg.color = new Color(0f, 0f, 0f, 0.80f);
+            dimImg.color = new Color(0.03f, 0.01f, 0.01f, 0.85f);
             FillParent(dim.GetComponent<RectTransform>());
 
             // Capture pointer events so clicks don't fall through
@@ -96,7 +96,7 @@ namespace COTLMP.Ui
             cardRt.anchoredPosition = Vector2.zero;
 
             var cardImg   = card.AddComponent<Image>();
-            cardImg.color = new Color(0.08f, 0.08f, 0.13f, 0.98f);
+            cardImg.color = new Color(0.12f, 0.07f, 0.07f, 0.98f);
 
             var vlg = card.AddComponent<VerticalLayoutGroup>();
             vlg.padding  = new RectOffset(40, 40, 36, 30);
@@ -107,17 +107,17 @@ namespace COTLMP.Ui
 
             // ---- title ----
             AddLabel(card.transform, MultiplayerModLocalization.UI.Welcome.Title,
-                16f, Color.white, FontStyles.Bold, TextAlignmentOptions.Center, 60f);
+                16f, new Color(0.96f, 0.88f, 0.72f, 1f), FontStyles.Bold, TextAlignmentOptions.Center, 60f);
 
             // ---- separator line ----
             var sep    = MakeRect("Sep", card.transform);
             var sepImg = sep.AddComponent<Image>();
-            sepImg.color = new Color(0.35f, 0.35f, 0.50f, 1f);
+            sepImg.color = new Color(0.55f, 0.40f, 0.18f, 1f);
             sep.AddComponent<LayoutElement>().preferredHeight = 2f;
 
             // ---- body text ----
             AddLabel(card.transform, MultiplayerModLocalization.UI.Welcome.Body,
-                13f, new Color(0.85f, 0.85f, 0.85f, 1f), FontStyles.Normal,
+                13f, new Color(0.82f, 0.74f, 0.60f, 1f), FontStyles.Normal,
                 TextAlignmentOptions.TopLeft, 240f);
 
             // ---- "don't show again" toggle row ----
@@ -132,7 +132,7 @@ namespace COTLMP.Ui
             // ---- confirm button ----
             var confirmBtn = BuildButton("ConfirmBtn", card.transform,
                 MultiplayerModLocalization.UI.Welcome.Confirm,
-                new Color(0.15f, 0.55f, 0.30f, 1f), 48f);
+                new Color(0.58f, 0.12f, 0.12f, 1f), 48f);
 
             confirmBtn.onClick.AddListener(() =>
             {
@@ -195,7 +195,7 @@ namespace COTLMP.Ui
             boxRt.sizeDelta = new Vector2(22f, 22f);
             box.AddComponent<LayoutElement>().preferredWidth = 22f;
             var boxImg = box.AddComponent<Image>();
-            boxImg.color = new Color(0.25f, 0.25f, 0.35f, 1f);
+            boxImg.color = new Color(0.20f, 0.14f, 0.14f, 1f);
 
             // Checkmark
             var checkGo  = MakeRect("Check", box.transform);
@@ -204,7 +204,7 @@ namespace COTLMP.Ui
             checkRt.offsetMin = new Vector2(3, 3);
             checkRt.offsetMax = new Vector2(-3, -3);
             var checkImg = checkGo.AddComponent<Image>();
-            checkImg.color = new Color(0.15f, 0.80f, 0.40f, 1f);
+            checkImg.color = new Color(0.78f, 0.60f, 0.18f, 1f);
             checkGo.SetActive(false);
 
             // Label
@@ -213,7 +213,7 @@ namespace COTLMP.Ui
             var lbl  = lblGo.AddComponent<TextMeshProUGUI>();
             lbl.text      = label;
             lbl.fontSize  = 13f;
-            lbl.color     = new Color(0.80f, 0.80f, 0.80f, 1f);
+            lbl.color     = new Color(0.75f, 0.68f, 0.55f, 1f);
             lbl.alignment = TextAlignmentOptions.MidlineLeft;
 
             // Toggle component
@@ -251,7 +251,7 @@ namespace COTLMP.Ui
             var tm = txtGo.AddComponent<TextMeshProUGUI>();
             tm.text      = label;
             tm.fontSize  = 15f;
-            tm.color     = Color.white;
+            tm.color     = new Color(0.96f, 0.90f, 0.78f, 1f);
             tm.fontStyle = FontStyles.Bold;
             tm.alignment = TextAlignmentOptions.Center;
 

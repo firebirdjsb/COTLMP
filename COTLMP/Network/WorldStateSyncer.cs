@@ -96,6 +96,27 @@ namespace COTLMP.Network
                                 {
                                     entry.X = sceneFollower.transform.position.x;
                                     entry.Y = sceneFollower.transform.position.y;
+
+                                    /* Facing angle */
+                                    try
+                                    {
+                                        if (sceneFollower.State != null)
+                                            entry.FacingAngle = sceneFollower.State.facingAngle;
+                                    }
+                                    catch { }
+
+                                    /* Body animation (track 1 in Spine) */
+                                    try
+                                    {
+                                        if (sceneFollower.Spine != null
+                                            && sceneFollower.Spine.AnimationState != null)
+                                        {
+                                            var track = sceneFollower.Spine.AnimationState.GetCurrent(1);
+                                            if (track?.Animation != null)
+                                                entry.Animation = track.Animation.Name;
+                                        }
+                                    }
+                                    catch { }
                                 }
                             }
                             catch { }
@@ -320,11 +341,35 @@ namespace COTLMP.Network
             if (!string.Equals(local, snapshot.SceneName, StringComparison.Ordinal))
                 return;
 
+            try { ApplyTime(snapshot); }         catch { }
             try { ApplyFollowers(snapshot); }    catch { }
             try { ApplyStructures(snapshot); }   catch { }
             try { ApplyEnemies(snapshot); }      catch { }
             try { ApplyDroppedItems(snapshot); }  catch { }
             try { ApplyResources(snapshot); }    catch { }
+        }
+
+        /* ---- time of day ---- */
+
+        /**
+         * @brief
+         * Syncs the client's game clock to the host so day/night cycles,
+         * follower schedules and time-gated events stay in lockstep.
+         */
+        private static void ApplyTime(WorldStateSnapshot snapshot)
+        {
+            if (!InternalData.IsMultiplayerSession || InternalData.IsHost) return;
+
+            try
+            {
+                if (TimeManager.CurrentDay != snapshot.CurrentDay)
+                    TimeManager.CurrentDay = snapshot.CurrentDay;
+
+                float drift = Mathf.Abs(TimeManager.CurrentGameTime - snapshot.TimeOfDay);
+                if (drift > 5f)
+                    TimeManager.CurrentGameTime = snapshot.TimeOfDay;
+            }
+            catch { }
         }
 
         /* ---- followers ---- */
@@ -349,9 +394,47 @@ namespace COTLMP.Network
                     Follower f = FollowerManager.FindFollowerByID(entry.ID);
                     if (f == null) continue;
 
-                    /* Lerp position towards host position */
+                    /* Lerp position toward host position for smooth movement.
+                       The client's own follower AI is suppressed (see CoopPatches)
+                       so there is no local movement to blend against.  Lerp
+                       avoids the visual snap that made followers appear to
+                       teleport every heartbeat cycle. */
                     Vector3 target = new Vector3(entry.X, entry.Y, f.transform.position.z);
-                    f.transform.position = Vector3.Lerp(f.transform.position, target, 0.5f);
+                    float dist = Vector3.Distance(f.transform.position, target);
+                    if (dist > 8f)
+                        f.transform.position = target;           // teleport if too far
+                    else
+                        f.transform.position = Vector3.Lerp(
+                            f.transform.position, target, 12f * Time.deltaTime);
+
+                    /* Facing angle */
+                    try
+                    {
+                        if (f.State != null)
+                        {
+                            f.State.facingAngle = entry.FacingAngle;
+                            f.State.LookAngle   = entry.FacingAngle;
+                        }
+                    }
+                    catch { }
+
+                    /* Body animation (track 1 in the follower's Spine) */
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(entry.Animation)
+                            && f.Spine != null && f.Spine.AnimationState != null)
+                        {
+                            var current = f.Spine.AnimationState.GetCurrent(1);
+                            if (current?.Animation == null
+                                || current.Animation.Name != entry.Animation)
+                            {
+                                var anim = f.Spine.Skeleton?.Data?.FindAnimation(entry.Animation);
+                                if (anim != null)
+                                    f.Spine.AnimationState.SetAnimation(1, anim, true);
+                            }
+                        }
+                    }
+                    catch { }
 
                     /* On client, disable interaction components so followers
                        only bother the host player. */

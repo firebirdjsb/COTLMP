@@ -60,6 +60,11 @@ namespace COTLMPServer
         private readonly object _clientsLock = new object();
         private readonly object _sendLock    = new object();
 
+        // Maps player name → last-known ID for clients that disconnected
+        // during this session.  Allows a reconnecting client to reclaim
+        // their old ID so the other players recognise them.
+        private readonly Dictionary<string, int> _disconnectedByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
         // Host save data sent to joining clients for world sync
         private byte[] _hostSaveData;
 
@@ -196,6 +201,17 @@ namespace COTLMPServer
 
                     lock (_clientsLock)
                     {
+                        // Fast path: exact same endpoint retrying (UDP packet
+                        // loss).  Still do the full announce so peers stay in
+                        // sync after a network hiccup.
+                        if (_endpointToId.TryGetValue(epKey, out int sameEpId)
+                            && _clients.ContainsKey(sameEpId))
+                        {
+                            SendTo(new Message { Type = MessageType.PlayerJoinAck, ID = sameEpId,
+                                Data = MessagePayload.EncodePlayerJoinAck(sameEpId, true) }, endpoint);
+                            return;
+                        }
+
                         if (_clients.Count >= MaxPlayers)
                         {
                             SendTo(new Message { Type = MessageType.PlayerKick, ID = -1,
@@ -203,20 +219,28 @@ namespace COTLMPServer
                             return;
                         }
 
-                        // Resend ack if reconnecting
-                        if (_endpointToId.TryGetValue(epKey, out int existingId))
+                        // Reconnect: if this player name was in the session
+                        // before, reuse their old ID so every peer recognises
+                        // them without needing a full leave/join cycle.
+                        int id;
+                        bool isReconnect = false;
+                        if (!string.IsNullOrEmpty(playerName)
+                            && _disconnectedByName.TryGetValue(playerName, out int oldId))
                         {
-                            SendTo(new Message { Type = MessageType.PlayerJoinAck, ID = existingId,
-                                Data = MessagePayload.EncodePlayerJoinAck(existingId, true) }, endpoint);
-                            return;
+                            id = oldId;
+                            _disconnectedByName.Remove(playerName);
+                            isReconnect = true;
+                        }
+                        else
+                        {
+                            id = _nextClientId++;
                         }
 
-                        int id = _nextClientId++;
                         var client = new ClientInfo(id, endpoint, playerName);
-                        _clients[id]       = client;
+                        _clients[id]         = client;
                         _endpointToId[epKey] = id;
 
-                        // Tell the new client its assigned ID
+                        // Tell the new/returning client its assigned ID
                         SendTo(new Message { Type = MessageType.PlayerJoinAck, ID = id,
                             Data = MessagePayload.EncodePlayerJoinAck(id, true) }, endpoint);
 
@@ -224,8 +248,7 @@ namespace COTLMPServer
                         BroadcastExcept(new Message { Type = MessageType.PlayerJoin, ID = id,
                             Data = MessagePayload.EncodePlayerJoin(playerName) }, id);
 
-                        // Tell the newcomer about every player that is already connected
-                        // so they can create remote avatars for each existing peer.
+                        // Tell the newcomer about every player already connected
                         foreach (var existing in _clients)
                         {
                             if (existing.Key != id)
@@ -235,7 +258,7 @@ namespace COTLMPServer
                             }
                         }
 
-                        _logger?.LogInfo($"Player '{playerName}' (ID {id}) joined from {endpoint}");
+                        _logger?.LogInfo($"Player '{playerName}' (ID {id}) {(isReconnect ? "re" : "")}joined from {endpoint}");
                         ClientJoined?.Invoke(this, new ClientEventArgs(client));
 
                         // Send the host's save data so the joiner loads into the same world
@@ -254,6 +277,11 @@ namespace COTLMPServer
                     {
                         if (!_endpointToId.TryGetValue(epKey, out int id)) return;
                         if (!_clients.TryGetValue(id, out ClientInfo client)) return;
+
+                        // Remember the player so they reclaim the same ID if
+                        // they rejoin during this session.
+                        if (!string.IsNullOrEmpty(client.PlayerName))
+                            _disconnectedByName[client.PlayerName] = id;
 
                         _clients.Remove(id);
                         _endpointToId.Remove(epKey);

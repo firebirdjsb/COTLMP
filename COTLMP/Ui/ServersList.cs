@@ -120,10 +120,10 @@ namespace COTLMP.Ui
 
             _root.AddComponent<GraphicRaycaster>();
 
-            // ---- full-screen opaque background (hides the main menu) ----
+            // Full-screen background that covers the main menu
             var bg    = MakeRect("Background", _root.transform);
             var bgImg = bg.AddComponent<Image>();
-            bgImg.color = new Color(0.04f, 0.04f, 0.08f, 1f);
+            bgImg.color = new Color(0.06f, 0.03f, 0.03f, 1f);
             FillParent(bg.GetComponent<RectTransform>());
 
             // ---- main panel ----
@@ -135,7 +135,7 @@ namespace COTLMP.Ui
             panelRt.sizeDelta        = new Vector2(860f, 600f);
             panelRt.anchoredPosition = Vector2.zero;
 
-            panel.AddComponent<Image>().color = new Color(0.08f, 0.08f, 0.13f, 0.98f);
+            panel.AddComponent<Image>().color = new Color(0.12f, 0.07f, 0.07f, 0.98f);
 
             var vlg = panel.AddComponent<VerticalLayoutGroup>();
             vlg.padding                = new RectOffset(24, 24, 20, 20);
@@ -147,11 +147,11 @@ namespace COTLMP.Ui
             // Title
             AddLabel(panel.transform,
                 MultiplayerModLocalization.UI.ServerList.ServerList_MainDescription,
-                18f, Color.white, FontStyles.Bold, TextAlignmentOptions.Center, 44f);
+                18f, new Color(0.96f, 0.88f, 0.72f, 1f), FontStyles.Bold, TextAlignmentOptions.Center, 44f);
 
             // Separator
             var sep = MakeRect("Sep", panel.transform);
-            sep.AddComponent<Image>().color = new Color(0.35f, 0.35f, 0.50f, 1f);
+            sep.AddComponent<Image>().color = new Color(0.55f, 0.40f, 0.18f, 1f);
             sep.AddComponent<LayoutElement>().preferredHeight = 2f;
 
             // Status label
@@ -160,7 +160,7 @@ namespace COTLMP.Ui
             _statusText           = statusGo.AddComponent<TextMeshProUGUI>();
             _statusText.text      = MultiplayerModLocalization.UI.ServerList.ServerList_SelectServer;
             _statusText.fontSize  = 12f;
-            _statusText.color     = new Color(0.70f, 0.70f, 0.70f, 1f);
+            _statusText.color     = new Color(0.62f, 0.54f, 0.42f, 1f);
             _statusText.alignment = TextAlignmentOptions.Center;
 
             BuildScrollList(panel.transform);
@@ -181,7 +181,7 @@ namespace COTLMP.Ui
 
             var viewportGo = MakeRect("Viewport", scrollGo.transform);
             FillParent(viewportGo.GetComponent<RectTransform>());
-            viewportGo.AddComponent<Image>().color = new Color(0.06f, 0.06f, 0.10f, 1f);
+            viewportGo.AddComponent<Image>().color = new Color(0.08f, 0.05f, 0.05f, 1f);
             viewportGo.AddComponent<Mask>().showMaskGraphic = true;
 
             var contentGo = MakeRect("Content", viewportGo.transform);
@@ -216,14 +216,14 @@ namespace COTLMP.Ui
             var inputGo  = MakeRect("IPInput", row.transform);
             inputGo.AddComponent<LayoutElement>().flexibleWidth = 1f;
             var inputImg = inputGo.AddComponent<Image>();
-            inputImg.color = new Color(0.15f, 0.15f, 0.22f, 1f);
+            inputImg.color = new Color(0.14f, 0.09f, 0.08f, 1f);
             _ipInput = inputGo.AddComponent<TMP_InputField>();
 
             var textGo     = MakeRect("Text", inputGo.transform);
             FillParent(textGo.GetComponent<RectTransform>());
             var textTm     = textGo.AddComponent<TextMeshProUGUI>();
             textTm.fontSize = 12f;
-            textTm.color    = Color.white;
+            textTm.color    = new Color(0.92f, 0.85f, 0.72f, 1f);
             textTm.margin   = new Vector4(6f, 0f, 6f, 0f);
 
             var phGo      = MakeRect("Placeholder", inputGo.transform);
@@ -231,7 +231,7 @@ namespace COTLMP.Ui
             var phTm      = phGo.AddComponent<TextMeshProUGUI>();
             phTm.text     = MultiplayerModLocalization.UI.ServerList.ServerList_IpPlaceholder;
             phTm.fontSize = 12f;
-            phTm.color    = new Color(0.5f, 0.5f, 0.5f, 1f);
+            phTm.color    = new Color(0.45f, 0.38f, 0.30f, 1f);
             phTm.fontStyle = FontStyles.Italic;
             phTm.margin   = new Vector4(6f, 0f, 6f, 0f);
 
@@ -241,7 +241,7 @@ namespace COTLMP.Ui
 
             var dcBtn = BuildButton("DCBtn", row.transform,
                 MultiplayerModLocalization.UI.ServerList.ServerList_DirectConnectButton,
-                new Color(0.15f, 0.40f, 0.65f, 1f), 36f, 160f);
+                new Color(0.40f, 0.25f, 0.12f, 1f), 36f, 160f);
             dcBtn.onClick.AddListener(OnDirectConnect);
         }
 
@@ -256,7 +256,7 @@ namespace COTLMP.Ui
 
             var backBtn = BuildButton("BackBtn", toolbar.transform,
                 MultiplayerModLocalization.UI.ServerList.ServerList_BackButton,
-                new Color(0.50f, 0.15f, 0.15f, 1f), 44f, 120f);
+                new Color(0.32f, 0.14f, 0.12f, 1f), 44f, 120f);
             backBtn.onClick.AddListener(Close);
 
             // Flexible spacer pushes scan/connect to the right
@@ -265,12 +265,12 @@ namespace COTLMP.Ui
 
             var scanBtn = BuildButton("ScanBtn", toolbar.transform,
                 MultiplayerModLocalization.UI.ServerList.ServerList_ScanButton,
-                new Color(0.15f, 0.45f, 0.25f, 1f), 44f, 140f);
+                new Color(0.50f, 0.35f, 0.10f, 1f), 44f, 140f);
             scanBtn.onClick.AddListener(OnScan);
 
             var connectBtn = BuildButton("ConnectBtn", toolbar.transform,
                 MultiplayerModLocalization.UI.ServerList.ServerList_ConnectButton,
-                new Color(0.15f, 0.55f, 0.30f, 1f), 44f, 120f);
+                new Color(0.58f, 0.12f, 0.12f, 1f), 44f, 120f);
             connectBtn.onClick.AddListener(OnConnect);
         }
 
@@ -491,12 +491,12 @@ namespace COTLMP.Ui
             go.AddComponent<LayoutElement>().preferredHeight = 34f;
 
             var img   = go.AddComponent<Image>();
-            img.color = new Color(0.12f, 0.12f, 0.18f, 1f);
+            img.color = new Color(0.14f, 0.09f, 0.09f, 1f);
 
             var btn             = go.AddComponent<Button>();
             ColorBlock cb       = btn.colors;
-            cb.highlightedColor = new Color(0.20f, 0.20f, 0.30f, 1f);
-            cb.pressedColor     = new Color(0.10f, 0.10f, 0.16f, 1f);
+            cb.highlightedColor = new Color(0.22f, 0.14f, 0.14f, 1f);
+            cb.pressedColor     = new Color(0.10f, 0.06f, 0.06f, 1f);
             btn.colors          = cb;
             btn.targetGraphic   = img;
 
@@ -506,10 +506,10 @@ namespace COTLMP.Ui
                     foreach (Transform child in _listContent)
                     {
                         var rowImg = child.GetComponent<Image>();
-                        if (rowImg != null) rowImg.color = new Color(0.12f, 0.12f, 0.18f, 1f);
+                        if (rowImg != null) rowImg.color = new Color(0.14f, 0.09f, 0.09f, 1f);
                     }
 
-                img.color = new Color(0.18f, 0.35f, 0.50f, 1f);
+                img.color = new Color(0.38f, 0.14f, 0.12f, 1f);
                 onSelected?.Invoke();
             });
 
@@ -518,7 +518,7 @@ namespace COTLMP.Ui
             var tm       = textGo.AddComponent<TextMeshProUGUI>();
             tm.text      = entry.DisplayLine;
             tm.fontSize  = 11f;
-            tm.color     = new Color(0.85f, 0.85f, 0.85f, 1f);
+            tm.color     = new Color(0.82f, 0.74f, 0.60f, 1f);
             tm.margin    = new Vector4(8f, 0f, 8f, 0f);
             tm.alignment = TextAlignmentOptions.MidlineLeft;
         }
@@ -584,7 +584,7 @@ namespace COTLMP.Ui
             var tm       = txtGo.AddComponent<TextMeshProUGUI>();
             tm.text      = label;
             tm.fontSize  = 13f;
-            tm.color     = Color.white;
+            tm.color     = new Color(0.96f, 0.90f, 0.78f, 1f);
             tm.fontStyle = FontStyles.Bold;
             tm.alignment = TextAlignmentOptions.Center;
 
